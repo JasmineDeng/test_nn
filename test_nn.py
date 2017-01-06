@@ -30,7 +30,7 @@ y_actual = tf.placeholder(tf.float32, [100, 10])
 x_image = tf.reshape(x, [100, 32, 32, 3])
 
 weights_1 = create_var([5, 5, 3, 4])
-bias_1 = create_var([32])
+bias_1 = create_var([4])
 
 # so can easily change activation function for entire network
 activation_func = tf.nn.relu
@@ -38,13 +38,14 @@ activation_func = tf.nn.relu
 # convolutional layer with sigmoid and max pooling
 # computes 32 features
 conv_layer_1 = tf.nn.conv2d(x_image, weights_1, strides=[1, 1, 1, 1], padding='SAME')
+print(conv_layer_1.get_shape())
 activation_1 = activation_func(conv_layer_1 + bias_1)
 pool_1 = tf.nn.max_pool(activation_1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
 
 # second convolutional layer with sigmoid and max pooling
 # computes 64 features
-weights_2 = create_var([2, 2, 32, 8])
-bias_2 = create_var([64])
+weights_2 = create_var([2, 2, 4, 8])
+bias_2 = create_var([8])
 
 conv_layer_2 = tf.nn.conv2d(pool_1, weights_2, strides=[1, 1, 1, 1], padding='SAME')
 activation_2 = activation_func(conv_layer_2 + bias_2)
@@ -61,14 +62,17 @@ keep_prob = tf.placeholder(tf.float32)
 dropout = tf.nn.dropout(activation_3, keep_prob)
 
 # reshape into 10 
-weight_reshape = create_var([256, 10])
+weight_reshape = create_var([8 * 8 * 8, 10])
 bias_reshape = create_var([10])
-max_pool = tf.reshape(activation_3, [100, 256])
-y_result = tf.nn.softmax(tf.matmul(max_pool, weight_reshape) + bias_reshape)
+max_pool = tf.reshape(activation_3, [100, 8 * 8 * 8])
+
+# y_result = tf.nn.softmax(inp)
 
 # construct rest of graph
-cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_actual * tf.log(y_result), reduction_indices=[1]))
-train_step = tf.train.AdamOptimizer(0.0001).minimize(cross_entropy)
+# cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_actual * tf.log(y_result), reduction_indices=[1]))
+
+cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(inp, y_actual))
+train_step = tf.train.AdamOptimizer(0.0001).minimize(cost)
 correct_prediction = tf.equal(tf.argmax(y_result, 1), tf.argmax(y_actual, 1))
 accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
