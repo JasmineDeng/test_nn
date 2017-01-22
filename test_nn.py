@@ -25,56 +25,56 @@ def shuffle_data(d):
 	random.shuffle(arr)
 	return zip(*arr)
 
+def conv_layer(inp, weight_shape, bias_shape, stride_shape, ksize_shape):
+	weights = create_var(weight_shape)
+	bias = create_var(bias_shape)
+	conv = tf.nn.conv2d(inp, weights, strides=stride_shape, padding='SAME')
+	activation = activation_func(conv + bias)
+	pool = tf.nn.max_pool(activation, ksize=ksize_shape, strides=stride_shape, padding='SAME')
+	return pool
+
+def fc_layer(inp, weight_shape, bias_shape, reshape):
+	weights = create_var(weight_shape)
+	bias = create_var(bias_shape)
+	new_inp = tf.reshape(inp, reshape)
+	activation = activation_func(tf.matmul(new_inp, weights) + bias)
+	return activation
+
+def dropout(inp, keep_prob):
+	return tf.nn.dropout(inp, keep_prob)
+
+# declare placeholder variables
 x = tf.placeholder(tf.float32, [100, 3072])
+keep_prob = tf.placeholder(tf.float32)
 y_actual = tf.placeholder(tf.float32, [100, 10])
+
+# reshape into an image with 3 color channels
 x_image = tf.reshape(x, [100, 32, 32, 3])
 
-weights_1 = create_var([5, 5, 3, 32])
-bias_1 = create_var([16])
-
-# so can easily change activation function for entire network
+# so can easily change variables for entire network
 activation_func = tf.nn.relu
-
-# convolutional layer with sigmoid and max pooling
-# computes 4 features
-conv_layer_1 = tf.nn.conv2d(x_image, weights_1, strides=[1, 1, 1, 1], padding='SAME')
-activation_1 = activation_func(conv_layer_1 + bias_1)
-pool_1 = tf.nn.max_pool(activation_1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
-
-# second convolutional layer with sigmoid and max pooling
-# computes 8 features
-weights_2 = create_var([5, 5, 32, 16])
-bias_2 = create_var([16])
-
-conv_layer_2 = tf.nn.conv2d(pool_1, weights_2, strides=[1, 1, 1, 1], padding='SAME')
-activation_2 = activation_func(conv_layer_2 + bias_2)
-pool_2 = tf.nn.max_pool(activation_2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME') 
-
+feat_1 = 32
+feat_2 = 16
+num_conv = 2
+conv_shape = ((32 // (num_conv ** 2)) ** 2) * feat_2
 fc_neuron = 64
+batch_size = 100
+stride_k_size = [1, 2, 2, 1]
+k_p = 0.5
+
+# convolutional layer 1
+conv_layer_1 = conv_layer(x_image, [5, 5, 3, feat_1], [feat_1], stride_k_size, stride_k_size)
+#convolutional layer 2
+conv_layer_2 = conv_layer(conv_layer_1, [5, 5, feat_1, feat_2], [feat_2], stride_k_size, stride_k_size)
 
 # fully connected layer
-weights_3 = create_var([16 * 8 * 8, fc_neuron])
-bias_3 = create_var([fc_neuron])
+fc_layer_1 = fc_layer(conv_layer_2, [conv_shape, fc_neuron], [fc_neuron], [batch_size, conv_shape])
+dropout(fc_layer_1, keep_prob)
 
-pool_3 = tf.reshape(pool_2, [100, 16 * 8 * 8])
-activation_3 = activation_func(tf.matmul(pool_3, weights_3) + bias_3)
-
-keep_prob = tf.placeholder(tf.float32)
-dropout_1 = tf.nn.dropout(activation_3, keep_prob)
-
-# reshape into 10 
-weight_reshape = create_var([fc_neuron, 10])
-bias_reshape = create_var([10])
-max_pool = tf.reshape(activation_3, [100, fc_neuron])
-
-dropout_2 = tf.nn.dropout(max_pool, keep_prob)
-
-# y_result = tf.nn.softmax(inp)
+# reshape into 10 for later softmax
+y_result = tf.matmul(fc_layer_1, create_var([fc_neuron, 10])) + create_var([10])
 
 # construct rest of graph
-# cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_actual * tf.log(y_result), reduction_indices=[1]))
-
-y_result = tf.matmul(max_pool, weight_reshape) + bias_reshape
 cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_actual, logits=y_result))
 train_step = tf.train.AdamOptimizer(0.0001).minimize(cost)
 correct_prediction = tf.equal(tf.argmax(y_result, 1), tf.argmax(y_actual, 1))
@@ -89,10 +89,12 @@ count = 1
 for file_name in train_batch:
 	data, labels = shuffle_data(unpickle(file_name))
 	labels = reshape_labels(labels)
-	for k in range(100):
-		train_step.run(feed_dict={ x: data[k:k + 100], y_actual: labels[k:k + 100], keep_prob: 0.5 })
+	for k in range(batch_size):
+		data_batch = data[k:k + batch_size]
+		labels_batch = labels[k:k + batch_size]
+		train_step.run(feed_dict={ x: data_batch, y_actual: labels_batch, keep_prob: k_p })
 		if k == 99:
-			train_accuracy = accuracy.eval(feed_dict={ x: data[k:k + 100], y_actual: labels[k:k + 100], keep_prob: 0.5})
+			train_accuracy = accuracy.eval(feed_dict={ x: data_batch, y_actual: labels_batch, keep_prob: k_p})
 			print("step %d, training accuracy %g"%(count, train_accuracy))
 	count += 1
 
@@ -100,7 +102,7 @@ test_data = unpickle('test_batch')
 avg = 0
 for i in range(100):
 	labels = reshape_labels(test_data['labels'])[i:i + 100]
-	test_accuracy = accuracy.eval(feed_dict={ x: test_data['data'][i:i+100], y_actual: labels, keep_prob: 0.5 })
+	test_accuracy = accuracy.eval(feed_dict={ x: test_data['data'][i:i+100], y_actual: labels, keep_prob: k_p })
 	avg += test_accuracy
 	if i % 10 == 0:
 		print("test accuracy for batch %d is %g"%(i, test_accuracy))
