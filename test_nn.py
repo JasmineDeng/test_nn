@@ -1,5 +1,4 @@
 import tensorflow as tf
-import numpy as np
 import random
 
 def unpickle(path):
@@ -42,119 +41,182 @@ def normalize_rgb(data):
 	print('done normalizing')
 
 def create_var(shape):
-	return tf.Variable(tf.truncated_normal(shape, 0, stddev=0.01, dtype=tf.float32), validate_shape=False)
+	return tf.Variable(tf.truncated_normal(shape, 0, stddev=0.01, dtype=tf.float32))
 
 def shuffle_data(d):
 	arr = zip(d['data'], d['labels'])
 	random.shuffle(arr)
 	return zip(*arr)
 
-def conv_layer(inp, weight_shape, bias_shape, stride_shape, ksize_shape):
-	weights = create_var(weight_shape)
-	bias = create_var(bias_shape)
-	conv = tf.nn.conv2d(inp, weights, strides=[1, 1, 1, 1], padding='SAME')
-	activation = activation_func(conv + bias)
-	pool = tf.nn.max_pool(activation, ksize=ksize_shape, strides=stride_shape, padding='SAME')
-	return pool
+def run_validation(feat_1, feat_2, fc_neuron):
+	x = tf.placeholder(tf.float32, [100, 3072])
+	y_actual = tf.placeholder(tf.float32, [100, 10])
+	x_image = tf.reshape(x, [100, 32, 32, 3])
 
-def fc_layer(inp, weight_shape, bias_shape, reshape):
-	weights = create_var(weight_shape)
-	bias = create_var(bias_shape)
-	new_inp = tf.reshape(inp, reshape)
-	activation = activation_func(tf.matmul(new_inp, weights) + bias)
-	return activation
+	weights_1 = create_var([5, 5, 3, feat_1])
+	bias_1 = create_var([feat_1])
 
-def dropout(inp, keep_prob):
-	return tf.nn.dropout(inp, keep_prob)
+	# so can easily change activation function for entire network
+	activation_func = tf.nn.relu
 
-def run_net(inp_dict, train_batch):
-	count = 0
+	# convolutional layer with sigmoid and max pooling
+	# computes 4 features
+	conv_layer_1 = tf.nn.conv2d(x_image, weights_1, strides=[1, 1, 1, 1], padding='SAME')
+	activation_1 = activation_func(conv_layer_1 + bias_1)
+	pool_1 = tf.nn.max_pool(activation_1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+
+	# second convolutional layer with sigmoid and max pooling
+	# computes 8 features
+	weights_2 = create_var([5, 5, feat_1, feat_2])
+	bias_2 = create_var([feat_2])
+
+	conv_layer_2 = tf.nn.conv2d(pool_1, weights_2, strides=[1, 1, 1, 1], padding='SAME')
+	activation_2 = activation_func(conv_layer_2 + bias_2)
+	pool_2 = tf.nn.max_pool(activation_2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME') 
+
+	conv_shape = (32 // 4) ** 2 * feat_2
+
+	# fully connected layer
+	weights_3 = create_var([conv_shape, fc_neuron])
+	bias_3 = create_var([fc_neuron])
+
+	pool_3 = tf.reshape(pool_2, [100, conv_shape])
+	activation_3 = activation_func(tf.matmul(pool_3, weights_3) + bias_3)
+
+	keep_prob = tf.placeholder(tf.float32)
+	dropout_1 = tf.nn.dropout(activation_3, keep_prob)
+
+	# reshape into 10 
+	weight_reshape = create_var([fc_neuron, 10])
+	bias_reshape = create_var([10])
+	max_pool = tf.reshape(activation_3, [100, fc_neuron])
+
+	dropout_2 = tf.nn.dropout(max_pool, keep_prob)
+
+	# y_result = tf.nn.softmax(inp)
+
+	# construct rest of graph
+	# cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_actual * tf.log(y_result), reduction_indices=[1]))
+
+	y_result = tf.matmul(max_pool, weight_reshape) + bias_reshape
+	cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_actual, logits=y_result))
+	train_step = tf.train.AdamOptimizer(0.0001).minimize(cost)
+	correct_prediction = tf.equal(tf.argmax(y_result, 1), tf.argmax(y_actual, 1))
+	accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
+	sess = tf.InteractiveSession()
+	sess.run(tf.initialize_all_variables())
+
+	train_batch = ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4']
+	count = 1
+
 	for file_name in train_batch:
 		data, labels = shuffle_data(unpickle(file_name))
-		normalize_rgb(data)
 		labels = reshape_labels(labels)
-		for k in range(batch_size):
-			data_batch = data[k:k + batch_size]
-			labels_batch = labels[k:k + batch_size]
-			train_step.run(feed_dict=inp_dict.update({ x: data_batch, y_actual: labels_batch, keep_prob: k_p }))
-			if k == 99:
-				train_accuracy = accuracy.eval(feed_dict={ x: data_batch, y_actual: labels_batch, keep_prob: k_p})
-				print("step %d, training accuracy %g"%(count, train_accuracy))
+		for k in range(100):
+			train_step.run(feed_dict={ x: data[k:k + 100], y_actual: labels[k:k + 100], keep_prob: 0.5 })
 		count += 1
 
-def validation_test(data_name, inp_dict):
-	test_data = unpickle(data_name)
+	test_data = unpickle('data_batch_5')
 	avg = 0
 	for i in range(100):
 		labels = reshape_labels(test_data['labels'])[i:i + 100]
-		test_accuracy = accuracy.eval(feed_dict=inp_dict.update({ x: test_data['data'][i:i+100], y_actual: labels, keep_prob: k_p }))
+		test_accuracy = accuracy.eval(feed_dict={ x: test_data['data'][i:i+100], y_actual: labels, keep_prob: 0.5 })
+		avg += test_accuracy
+	return float(avg) / 100.0
+
+def run_net(feat_1, feat_2, fc_neuron):
+	x = tf.placeholder(tf.float32, [100, 3072])
+	y_actual = tf.placeholder(tf.float32, [100, 10])
+	x_image = tf.reshape(x, [100, 32, 32, 3])
+
+	weights_1 = create_var([5, 5, 3, feat_1])
+	bias_1 = create_var([feat_1])
+
+	# so can easily change activation function for entire network
+	activation_func = tf.nn.relu
+
+	# convolutional layer with sigmoid and max pooling
+	# computes 4 features
+	conv_layer_1 = tf.nn.conv2d(x_image, weights_1, strides=[1, 1, 1, 1], padding='SAME')
+	activation_1 = activation_func(conv_layer_1 + bias_1)
+	pool_1 = tf.nn.max_pool(activation_1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+
+	# second convolutional layer with sigmoid and max pooling
+	# computes 8 features
+	weights_2 = create_var([5, 5, feat_1, feat_2])
+	bias_2 = create_var([feat_2])
+
+	conv_layer_2 = tf.nn.conv2d(pool_1, weights_2, strides=[1, 1, 1, 1], padding='SAME')
+	activation_2 = activation_func(conv_layer_2 + bias_2)
+	pool_2 = tf.nn.max_pool(activation_2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME') 
+
+	conv_shape = (32 // 4) ** 2 * feat_2
+
+	# fully connected layer
+	weights_3 = create_var([conv_shape, fc_neuron])
+	bias_3 = create_var([fc_neuron])
+
+	pool_3 = tf.reshape(pool_2, [100, conv_shape])
+	activation_3 = activation_func(tf.matmul(pool_3, weights_3) + bias_3)
+
+	keep_prob = tf.placeholder(tf.float32)
+	dropout_1 = tf.nn.dropout(activation_3, keep_prob)
+
+	# reshape into 10 
+	weight_reshape = create_var([fc_neuron, 10])
+	bias_reshape = create_var([10])
+	max_pool = tf.reshape(activation_3, [100, fc_neuron])
+
+	dropout_2 = tf.nn.dropout(max_pool, keep_prob)
+
+	# y_result = tf.nn.softmax(inp)
+
+	# construct rest of graph
+	# cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_actual * tf.log(y_result), reduction_indices=[1]))
+
+	y_result = tf.matmul(max_pool, weight_reshape) + bias_reshape
+	cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_actual, logits=y_result))
+	train_step = tf.train.AdamOptimizer(0.0001).minimize(cost)
+	correct_prediction = tf.equal(tf.argmax(y_result, 1), tf.argmax(y_actual, 1))
+	accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
+	sess = tf.InteractiveSession()
+	sess.run(tf.initialize_all_variables())
+
+	train_batch = ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4', 'data_batch_5']
+	count = 1
+
+	for file_name in train_batch:
+		data, labels = shuffle_data(unpickle(file_name))
+		labels = reshape_labels(labels)
+		for k in range(100):
+			train_step.run(feed_dict={ x: data[k:k + 100], y_actual: labels[k:k + 100], keep_prob: 0.5 })
+			if k == 99:
+				train_accuracy = accuracy.eval(feed_dict={ x: data[k:k + 100], y_actual: labels[k:k + 100], keep_prob: 0.5})
+				print("step %d, training accuracy %g"%(count, train_accuracy))
+		count += 1
+
+	test_data = unpickle('test_batch')
+	avg = 0
+	for i in range(100):
+		labels = reshape_labels(test_data['labels'])[i:i + 100]
+		test_accuracy = accuracy.eval(feed_dict={ x: test_data['data'][i:i+100], y_actual: labels, keep_prob: 0.5 })
 		avg += test_accuracy
 		if i % 10 == 0:
 			print("test accuracy for batch %d is %g"%(i, test_accuracy))
-	print("accuracy overall is " + str(avg / 100.0))
-	return avg / 100.0
+	print("test accuracy overall is " + str(avg / 100.0))
 
-# declare placeholder variables
-x = tf.placeholder(tf.float32, [100, 3072])
-keep_prob = tf.placeholder(tf.float32)
-y_actual = tf.placeholder(tf.float32, [100, 10])
-
-feat_1_temp = tf.placeholder(tf.int32)
-feat_2_temp = tf.placeholder(tf.int32)
-fc_neuron_temp = tf.placeholder(tf.int32)
-feat_1 = tf.Variable((0))
-feat_2 = tf.Variable((0))
-fc_neuron = tf.Variable((0))
-feat_1.assign(feat_1_temp)
-feat_2.assign(feat_2_temp)
-fc_neuron.assign(fc_neuron_temp)
-
-# reshape into an image with 3 color channels
-x_image = tf.reshape(x, [100, 32, 32, 3])
-
-# so can easily change variables for entire network
-activation_func = tf.nn.relu
-num_conv = 2
-conv_shape = ((32 // (num_conv ** 2)) ** 2) * feat_2
-batch_size = 100
-stride_k_size = [1, 2, 2, 1]
-k_p = 0.5
-
-# convolutional layer 1
-conv_layer_1 = conv_layer(x_image, [5, 5, 3, feat_1], [feat_1], stride_k_size, stride_k_size)
-#convolutional layer 2
-conv_layer_2 = conv_layer(conv_layer_1, [5, 5, feat_1, feat_2], [feat_2], stride_k_size, stride_k_size)
-
-# fully connected layer
-fc_layer_1 = fc_layer(conv_layer_2, [conv_shape, fc_neuron], [fc_neuron], [batch_size, conv_shape])
-dropout(fc_layer_1, keep_prob)
-
-# reshape into 10 for later softmax
-y_result = tf.matmul(fc_layer_1, create_var([fc_neuron, 10])) + create_var([10])
-
-# construct rest of graph
-cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_actual, logits=y_result))
-train_step = tf.train.AdamOptimizer(0.0001).minimize(cost)
-correct_prediction = tf.equal(tf.argmax(y_result, 1), tf.argmax(y_actual, 1))
-accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-
-feat_1_inp = [2, 4, 8, 16, 32, 64]
-feat_2_inp = [2, 4, 8, 16, 32, 64]
-fc_neuron_inp = [32, 64, 128, 256, 512, 1024]
-
-max_elem = ({}, float('-inf'))
-train_batch = ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4']
+feat_1_inp = [8, 16, 32]
+feat_2_inp = [8, 16, 32]
+fc_neuron_inp = [32, 64, 128, 256]
+count = 0
+max_num = (float('-inf'), {})
 for f1 in feat_1_inp:
 	for f2 in feat_2_inp:
 		for fc in fc_neuron_inp:
-			sess = tf.InteractiveSession()
-			sess.run(tf.initialize_all_variables())
-			inp_dict = {feat_1: f1, feat_2: f2, fc_neuron: fc}
-			run_net(inp_dict, train_batch)
-			max_elem = max((inp_dict, validate_test('data_batch_5', inp_dict)), max_elem, key=lambda x:x[0])
+			count += 1
+			print('\033[92m' + 'running with f1 %d, f2 %d, fc %d on iteration %d' % (f1, f2, fc, count) + '\033[0m')
+			max_num = max((run_validation(f1, f2, fc), {'f1': f1, 'f2': f2, 'fc': fc}), max_num, key=lambda x: x[0])
 
-sess = tf.InteractiveSession()
-sess.run(tf.initialize_all_variables())
-train_batch.append('data_batch_5')
-run_net(max_elem[0], train_batch)
-validate_test('test_batch')
+run_net(max_num[1]['f1'], max_num[1]['f2'], max_num[1]['fc'])
