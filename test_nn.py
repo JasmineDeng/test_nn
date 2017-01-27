@@ -48,43 +48,44 @@ def shuffle_data(d):
 	random.shuffle(arr)
 	return zip(*arr)
 
+def conv_layer(inp, weight_shape, bias_shape, act_func):
+	weights = create_var(weight_shape)
+	bias = create_var(bias_shape)
+	conv = tf.nn.conv2d(inp, weights, strides=[1, 1, 1, 1], padding='SAME')
+	activation = act_func(conv + bias)
+	pool = tf.nn.max_pool(activation, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+	return pool
+
+def fc_layer(inp, weight_shape, bias_shape, reshape_shape, act_func):
+	weights = create_var(weight_shape)
+	bias = create_var(bias_shape)
+	new_inp = tf.reshape(inp, reshape_shape)
+	activation = act_func(tf.matmul(new_inp, weights) + bias)
+	return activation
+
 def run_validation(feat_1, feat_2, fc_neuron):
 	x = tf.placeholder(tf.float32, [100, 3072])
 	y_actual = tf.placeholder(tf.float32, [100, 10])
 	x_image = tf.reshape(x, [100, 32, 32, 3])
-
-	weights_1 = create_var([5, 5, 3, feat_1])
-	bias_1 = create_var([feat_1])
 
 	# so can easily change activation function for entire network
 	activation_func = tf.nn.relu
 
 	# convolutional layer with sigmoid and max pooling
 	# computes 4 features
-	conv_layer_1 = tf.nn.conv2d(x_image, weights_1, strides=[1, 1, 1, 1], padding='SAME')
-	activation_1 = activation_func(conv_layer_1 + bias_1)
-	pool_1 = tf.nn.max_pool(activation_1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+	conv_layer_1 = conv_layer(x_image, [5, 5, 3, feat_1], [feat_1], activation_func)
 
 	# second convolutional layer with sigmoid and max pooling
 	# computes 8 features
-	weights_2 = create_var([5, 5, feat_1, feat_2])
-	bias_2 = create_var([feat_2])
-
-	conv_layer_2 = tf.nn.conv2d(pool_1, weights_2, strides=[1, 1, 1, 1], padding='SAME')
-	activation_2 = activation_func(conv_layer_2 + bias_2)
-	pool_2 = tf.nn.max_pool(activation_2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME') 
+	conv_layer_2 = conv_layer(conv_layer_1, [5, 5, feat_1, feat_2], [feat_2], activation_func)
 
 	conv_shape = (32 // 4) ** 2 * feat_2
 
 	# fully connected layer
-	weights_3 = create_var([conv_shape, fc_neuron])
-	bias_3 = create_var([fc_neuron])
-
-	pool_3 = tf.reshape(pool_2, [100, conv_shape])
-	activation_3 = activation_func(tf.matmul(pool_3, weights_3) + bias_3)
+	fc_layer_1 = fc_layer(conv_layer_2, [conv_shape, fc_neuron], [fc_neuron], [100, conv_shape], activation_func)
 
 	keep_prob = tf.placeholder(tf.float32)
-	dropout_1 = tf.nn.dropout(activation_3, keep_prob)
+	dropout_1 = tf.nn.dropout(fc_layer_1, keep_prob)
 
 	# reshape into 10 
 	weight_reshape = create_var([fc_neuron, 10])
@@ -130,35 +131,21 @@ def run_net(feat_1, feat_2, fc_neuron):
 	y_actual = tf.placeholder(tf.float32, [100, 10])
 	x_image = tf.reshape(x, [100, 32, 32, 3])
 
-	weights_1 = create_var([5, 5, 3, feat_1])
-	bias_1 = create_var([feat_1])
-
 	# so can easily change activation function for entire network
 	activation_func = tf.nn.relu
 
 	# convolutional layer with sigmoid and max pooling
 	# computes 4 features
-	conv_layer_1 = tf.nn.conv2d(x_image, weights_1, strides=[1, 1, 1, 1], padding='SAME')
-	activation_1 = activation_func(conv_layer_1 + bias_1)
-	pool_1 = tf.nn.max_pool(activation_1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+	conv_layer_1 = conv_layer(x_image, [5, 5, 3, feat_1], [feat_1], activation_func)
 
 	# second convolutional layer with sigmoid and max pooling
 	# computes 8 features
-	weights_2 = create_var([5, 5, feat_1, feat_2])
-	bias_2 = create_var([feat_2])
-
-	conv_layer_2 = tf.nn.conv2d(pool_1, weights_2, strides=[1, 1, 1, 1], padding='SAME')
-	activation_2 = activation_func(conv_layer_2 + bias_2)
-	pool_2 = tf.nn.max_pool(activation_2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME') 
+	conv_layer_2 = conv_layer(conv_layer_1, [5, 5, feat_1, feat_2], [feat_2], activation_func)
 
 	conv_shape = (32 // 4) ** 2 * feat_2
 
 	# fully connected layer
-	weights_3 = create_var([conv_shape, fc_neuron])
-	bias_3 = create_var([fc_neuron])
-
-	pool_3 = tf.reshape(pool_2, [100, conv_shape])
-	activation_3 = activation_func(tf.matmul(pool_3, weights_3) + bias_3)
+	fc_layer_1 = fc_layer(conv_layer_2, [conv_shape, fc_neuron], [fc_neuron], [100, conv_shape], activation_func)
 
 	keep_prob = tf.placeholder(tf.float32)
 	dropout_1 = tf.nn.dropout(activation_3, keep_prob)
@@ -220,3 +207,4 @@ for f1 in feat_1_inp:
 			max_num = max((run_validation(f1, f2, fc), {'f1': f1, 'f2': f2, 'fc': fc}), max_num, key=lambda x: x[0])
 
 run_net(max_num[1]['f1'], max_num[1]['f2'], max_num[1]['fc'])
+print(max_num)
