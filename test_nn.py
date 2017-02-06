@@ -56,11 +56,11 @@ def conv_layer(name, inp, weight_shape, bias_shape, act_func, tb=False):
 		with tf.name_scope('weights'):
 			weights = create_var(weight_shape)
 			if tb:
-				tf.summary.histogram(name + '_weights', weights)
+				tf.histogram_summary(name + ' weights', weights)
 		with tf.name_scope('bias'):
 			bias = create_var(bias_shape)
 			if tb:
-				tf.summary.histogram(name + '_bias', bias)
+				tf.histogram_summary(name + ' bias', bias)
 		with tf.name_scope('conv'):
 			conv = tf.nn.conv2d(inp, weights, strides=[1, 1, 1, 1], padding='SAME')
 			pre_activate = conv + bias
@@ -74,11 +74,11 @@ def fc_layer(name, inp, weight_shape, bias_shape, reshape_shape, act_func, tb=Fa
 		with tf.name_scope('weights'):
 			weights = create_var(weight_shape)
 			if tb:
-				tf.summary.histogram(name + '_weights', weights)
+				tf.histogram_summary(name + ' weights', weights)
 		with tf.name_scope('bias'):
 			bias = create_var(bias_shape)
 			if tb:
-				tf.summary.histogram(name + '_bias', bias)
+				tf.histogram_summary(name + ' bias', bias)
 		with tf.name_scope('Wx_plus_b'):
 			new_inp = tf.reshape(inp, reshape_shape)
 			pre_activate = tf.matmul(new_inp, weights) + bias
@@ -112,13 +112,10 @@ def run_net(feat_1, feat_2, fc_neuron, train_batch=['data_batch_1', 'data_batch_
 	keep_prob = tf.placeholder(tf.float32)
 	dropout_1 = tf.nn.dropout(fc_layer_1, keep_prob)
 
-	# reshape into 10
-	with tf.name_scope('pre_softmax'):
-		with tf.name_scope('weights'):
-			weight_reshape = create_var([fc_neuron, 10])
-		with tf.name_scope('bias'):
-			bias_reshape = create_var([10])
-		max_pool = tf.reshape(dropout_1, [100, fc_neuron])
+	# reshape into 10 
+	weight_reshape = create_var([fc_neuron, 10])
+	bias_reshape = create_var([10])
+	max_pool = tf.reshape(dropout_1, [100, fc_neuron])
 
 	y_result = tf.matmul(max_pool, weight_reshape) + bias_reshape
 	
@@ -127,7 +124,7 @@ def run_net(feat_1, feat_2, fc_neuron, train_batch=['data_batch_1', 'data_batch_
 		with tf.name_scope('total'):
 			cost = tf.reduce_mean(diff)
 	if tensorboard:
-		tf.summary.scalar('cross_entropy', cost)
+		tf.scalar_summary('cross_entropy', cost)
 	
 	with tf.name_scope('train'):
 		train_step = tf.train.AdamOptimizer(0.0001).minimize(cost)
@@ -138,7 +135,7 @@ def run_net(feat_1, feat_2, fc_neuron, train_batch=['data_batch_1', 'data_batch_
 		with tf.name_scope('accuracy'):	
 			accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 	if tensorboard:
-		accuracy_summary = tf.summary.scalar('training_accuracy', accuracy)
+		accuracy_summary = tf.scalar_summary('training accuracy', accuracy)
 
 	with tf.name_scope('gradient'):
 		loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_actual, logits=y_result))
@@ -146,13 +143,14 @@ def run_net(feat_1, feat_2, fc_neuron, train_batch=['data_batch_1', 'data_batch_
 		grads = list(zip(grads, tf.trainable_variables()))
 		for grad, var in grads:
 			if grad is not None and tensorboard:
-				tf.summary.histogram(var.name + '_gradient', grad)
+				tf.histogram_summary(var.name + '/gradient', grad)
 
 	sess = tf.InteractiveSession()
 	if tensorboard:
-		summary_op = tf.summary.merge_all()
-		train_writer = tf.summary.FileWriter(path + '/train', sess.graph)
-	tf.global_variables_initializer().run()
+		summary_op = tf.merge_all_summaries()
+		train_writer = tf.train.SummaryWriter(path + '/train', graph=tf.get_default_graph())
+		test_writer = tf.train.SummaryWriter(path + '/test', graph=tf.get_default_graph())
+	sess.run(tf.initialize_all_variables())
 
 	cifar_data = {'data': [], 'labels': []}
 	for name in train_batch:
@@ -169,9 +167,10 @@ def run_net(feat_1, feat_2, fc_neuron, train_batch=['data_batch_1', 'data_batch_
 		labels = reshape_labels(labels)
 		feed = { x: data, y_actual: labels, keep_prob: 0.5}
 		if tensorboard:
-			summary = sess.run(summary_op, feed_dict=feed)
-			train_writer.add_summary(summary)
-		train_step.run(feed_dict=feed)
+			_, summary = sess.run([train_step, summary_op], feed_dict=feed)
+			train_writer.add_summary(summary, i * 100)
+		else:
+			train_step.run(feed_dict=feed)
 		if i % 100 == 0 and print_acc:
 			train_accuracy = accuracy.eval(feed_dict=feed)
 			print("step %d, training accuracy %g"%(i, train_accuracy))
@@ -181,6 +180,9 @@ def run_net(feat_1, feat_2, fc_neuron, train_batch=['data_batch_1', 'data_batch_
 	for i in range(100):
 		labels = reshape_labels(test_data['labels'])[i:i + 100]
 		feed = { x: test_data['data'][i:i+100], y_actual: labels, keep_prob: 0.5 }
+		if tensorboard:
+			acc = sess.run(accuracy_summary, feed_dict=feed)
+			test_writer.add_summary(acc, i)
 		test_accuracy = accuracy.eval(feed_dict=feed)
 		avg += test_accuracy
 		if i % 10 == 0 and print_acc:
