@@ -4,6 +4,8 @@ import random
 
 FLAGS = None
 
+# (0.5360999712347985, {'f1': 64, 'f2': 256, 'fc': 2048})
+
 def unpickle(path):
     import cPickle
     file = 'cifar-10-batches-py/' + str(path)
@@ -135,7 +137,7 @@ def run_net(feat_1, feat_2, fc_neuron, train_batch=['data_batch_1', 'data_batch_
 		with tf.name_scope('accuracy'):	
 			accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 	if tensorboard:
-		accuracy_summary = tf.scalar_summary('training accuracy', accuracy)
+		acc1_summary = tf.scalar_summary('training accuracy', accuracy)
 
 	with tf.name_scope('gradient'):
 		loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_actual, logits=y_result))
@@ -148,8 +150,9 @@ def run_net(feat_1, feat_2, fc_neuron, train_batch=['data_batch_1', 'data_batch_
 	sess = tf.InteractiveSession()
 	if tensorboard:
 		summary_op = tf.merge_all_summaries()
-		train_writer = tf.train.SummaryWriter(path + '/train', graph=tf.get_default_graph())
-		test_writer = tf.train.SummaryWriter(path + '/test', graph=tf.get_default_graph())
+		train_writer = tf.train.SummaryWriter(path, graph=tf.get_default_graph())
+		acc2_summary = tf.scalar_summary('test accuracy', accuracy)
+		acc3_summary = tf.scalar_summary('final accuracy', accuracy)
 	sess.run(tf.initialize_all_variables())
 
 	cifar_data = {'data': [], 'labels': []}
@@ -158,6 +161,9 @@ def run_net(feat_1, feat_2, fc_neuron, train_batch=['data_batch_1', 'data_batch_
 		cifar_data['data'].extend(new_data['data'])
 		cifar_data['labels'].extend(new_data['labels'])
 	cifar_data = shuffle_data(cifar_data)
+
+	test_data = unpickle(test_batch)
+	test_data = shuffle_data(test_data)
 
 	for i in range(len(cifar_data[0]) // 100):
 		data = cifar_data[0][100 * i: 100 * i + 100]
@@ -169,20 +175,24 @@ def run_net(feat_1, feat_2, fc_neuron, train_batch=['data_batch_1', 'data_batch_
 		if tensorboard:
 			_, summary = sess.run([train_step, summary_op], feed_dict=feed)
 			train_writer.add_summary(summary, i * 100)
+			if i % 10 == 0:
+				feed_test = { x: test_data[0][i: i + 100], y_actual: reshape_labels(test_data[1][i:i+100]), keep_prob: 0.5 }
+				test_accuracy = sess.run(acc2_summary, feed_dict=feed_test)
+				test_data = shuffle_data({'data': test_data[0], 'labels': test_data[1]})
+				train_writer.add_summary(test_accuracy, i * 100)
 		else:
 			train_step.run(feed_dict=feed)
 		if i % 100 == 0 and print_acc:
 			train_accuracy = accuracy.eval(feed_dict=feed)
 			print("step %d, training accuracy %g"%(i, train_accuracy))
 
-	test_data = unpickle(test_batch)
 	avg = 0
 	for i in range(100):
-		labels = reshape_labels(test_data['labels'])[i:i + 100]
-		feed = { x: test_data['data'][i:i+100], y_actual: labels, keep_prob: 0.5 }
+		labels = reshape_labels(test_data[1])[i:i + 100]
+		feed = { x: test_data[0][i:i+100], y_actual: labels, keep_prob: 0.5 }
 		if tensorboard:
-			acc = sess.run(accuracy_summary, feed_dict=feed)
-			test_writer.add_summary(acc, i)
+			acc = sess.run(acc3_summary, feed_dict=feed)
+			train_writer.add_summary(acc, i)
 		test_accuracy = accuracy.eval(feed_dict=feed)
 		avg += test_accuracy
 		if i % 10 == 0 and print_acc:
